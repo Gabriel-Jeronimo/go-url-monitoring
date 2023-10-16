@@ -1,6 +1,7 @@
 package main
 
 import (
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -16,31 +17,26 @@ type Url struct {
 }
 
 func main() {
-	ticker := time.NewTicker(5 * time.Second)
-	func() {
-		for {
-			select {
-			case <-ticker.C:
-				process()
-			}
-		}
-	}()
+	tickerInterval := 5 * time.Second
+	ticker := time.NewTicker(tickerInterval)
+
+	urlsToMonitor := []Url{
+		{Uri: "google.com:80"},
+		{Uri: "ldkasldkas.com:80"},
+	}
+
+	for range ticker.C {
+		process(urlsToMonitor)
+	}
 }
 
-func process() {
+func process(urls []Url) {
 	var wg sync.WaitGroup
 	mainCh := make(chan Url, 2)
 
-	urlsToMonitor := []Url{
-		Url{Uri: "google.com:80"},
-		Url{Uri: "twitter.com:80"},
-		Url{Uri: "abc.com:80"},
-		Url{Uri: "http://ldkasldkas.com/"},
-	}
-
-	for _, v := range urlsToMonitor {
+	for _, url := range urls {
 		wg.Add(1)
-		go callUri(v.Uri, &wg, mainCh)
+		go callUri(url.Uri, &wg, mainCh)
 	}
 
 	go func() {
@@ -48,24 +44,24 @@ func process() {
 		close(mainCh)
 	}()
 
-	result := []Url{}
-	for t := range mainCh {
-		if t.Active != true {
-			color.Red("URL: %s - Active: %t - LastCalled: %s\n", t.Uri, t.Active, t.LastCalled)
+	for urlResult := range mainCh {
+		if urlResult.Active {
+			color.Green("URL: %s - Active: %t - ResponseTime: %s - LastCalled: %s\n", urlResult.Uri, urlResult.Active, urlResult.responseTime, urlResult.LastCalled)
 		} else {
-			color.Green("URL: %s - Active: %t - ResponseTime: %s - LastCalled: %s\n", t.Uri, t.Active, t.responseTime, t.LastCalled)
+			color.Red("URL: %s - Active: %t - LastCalled: %s\n", urlResult.Uri, urlResult.Active, urlResult.LastCalled)
 		}
 	}
-	urlsToMonitor = result
-
 }
+
 func callUri(uri string, wg *sync.WaitGroup, mainCh chan<- Url) {
 	defer wg.Done()
 
 	conn, err := net.Dial("tcp", uri)
+	lastCalled := time.Now().String()
 
 	if err != nil {
-		mainCh <- Url{Uri: uri, responseTime: 0, Active: false, LastCalled: time.Now().String()}
+		log.Printf("Failed to connect to URL: %s - Error: %v\n", uri, err)
+		mainCh <- Url{Uri: uri, responseTime: 0, Active: false, LastCalled: lastCalled}
 		return
 	}
 
@@ -76,9 +72,10 @@ func callUri(uri string, wg *sync.WaitGroup, mainCh chan<- Url) {
 	_, err = conn.Read(oneByte)
 
 	if err != nil {
-		mainCh <- Url{Uri: uri, responseTime: time.Since(start), Active: false, LastCalled: time.Now().String()}
+		log.Printf("Failed to read from URL: %s - Error: %v\n", uri, err)
+		mainCh <- Url{Uri: uri, responseTime: time.Since(start), Active: false, LastCalled: lastCalled}
 		return
 	}
 
-	mainCh <- Url{Uri: uri, responseTime: time.Since(start), Active: true, LastCalled: time.Now().String()}
+	mainCh <- Url{Uri: uri, responseTime: time.Since(start), Active: true, LastCalled: lastCalled}
 }
